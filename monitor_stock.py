@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Моніторинг наявності розміру S для тренча Reserved 493IA-80X.
+Хмарний/локальний моніторинг наявності кількох товарів (Reserved + Zara).
 
-Локально:
   python3 monitor_stock.py
-  python3 monitor_stock.py --watch
+  python3 monitor_stock.py --cloud
   python3 monitor_stock.py --test-telegram
-
-У хмарі (GitHub Actions) ноут може бути вимкнений — див. workflow.
 """
 
 from __future__ import annotations
@@ -26,82 +23,63 @@ from email.message import EmailMessage
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-SKU = "493IA-80X"
-STORE_ID = "1007"  # Reserved UA
-TARGET_SIZE = "S"
-API_URL = f"https://arch.reserved.com/api/{STORE_ID}/product/{SKU}"
-PRODUCT_URL = "https://www.reserved.com/ua/uk/trench-z-bavovnoiu-493ia-80x"
 TZ = ZoneInfo("Europe/Kyiv")
-
 BASE_DIR = Path(__file__).resolve().parent
-LOG_PATH = BASE_DIR / "availability_log.jsonl"
-STATE_PATH = BASE_DIR / "last_state.json"
+PRODUCTS_PATH = BASE_DIR / "products.json"
+STATE_PATH = BASE_DIR / "state.json"
+LEGACY_STATE_PATH = BASE_DIR / "last_state.json"
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/122.0.0.0 Safari/537.36"
+)
 
 
 def now_kyiv() -> datetime:
     return datetime.now(TZ)
 
 
-def fetch_product() -> dict:
-    req = urllib.request.Request(
-        API_URL,
-        headers={
-            "Accept": "application/json",
-            "User-Agent": (
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Origin": "https://www.reserved.com",
-            "Referer": PRODUCT_URL,
-        },
-    )
+def http_json(url: str, *, referer: str | None = None) -> dict | list:
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": USER_AGENT,
+    }
+    if referer:
+        headers["Referer"] = referer
+        headers["Origin"] = referer.split("/ua/")[0] if "/ua/" in referer else referer
+    req = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(req, timeout=30) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def size_status(product: dict, size_letter: str = TARGET_SIZE) -> dict | None:
-    for size in product.get("sizes") or []:
-        name = (size.get("sizeName") or "").upper()
-        sku = (size.get("sku") or "").upper()
-        if name.startswith(f"{size_letter} ") or sku.endswith(f"-{size_letter}"):
+def load_products() -> list[dict]:
+    data = json.loads(PRODUCTS_PATH.read_text(encoding="utf-8"))
+    return list(data.get("products") or [])
+
+
+def load_state() -> dict:
+    if STATE_PATH.exists():
+        try:
+            return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    # Міграція зі старого single-product стейту
+    if LEGACY_STATE_PATH.exists():
+        try:
+            legacy = json.loads(LEGACY_STATE_PATH.read_text(encoding="utf-8"))
             return {
-                "size_name": size.get("sizeName"),
-                "sku": size.get("sku"),
-                "in_stock": bool(size.get("isInStock") or size.get("stock")),
-                "stock_quantity": size.get("stockQuantity"),
-                "in_transit": bool(
-                    size.get("isStockInTransit") or size.get("inTransitStock")
-                ),
+                "reserved-trench-493IA-80X": {
+                    "sizes": {
+                        "S": {
+                            "in_stock": bool(legacy.get("in_stock")),
+                            "checked_at": legacy.get("checked_at"),
+                        }
+                    }
+                }
             }
-    return None
-
-
-def all_sizes_summary(product: dict) -> list[dict]:
-    rows = []
-    for size in product.get("sizes") or []:
-        rows.append(
-            {
-                "size_name": size.get("sizeName"),
-                "in_stock": bool(size.get("isInStock") or size.get("stock")),
-                "stock_quantity": size.get("stockQuantity"),
-            }
-        )
-    return rows
-
-
-def append_log(entry: dict) -> None:
-    with LOG_PATH.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def load_last_state() -> dict | None:
-    if not STATE_PATH.exists():
-        return None
-    try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
 
 
 def save_state(state: dict) -> None:
@@ -111,25 +89,11 @@ def save_state(state: dict) -> None:
     )
 
 
-def notify_macos(title: str, message: str) -> None:
-    try:
-        import subprocess
-
-        script = (
-            f'display notification {json.dumps(message)} '
-            f'with title {json.dumps(title)}'
-        )
-        subprocess.run(["osascript", "-e", script], check=False, timeout=5)
-    except Exception:
-        pass
-
-
 def notify_telegram(text: str) -> bool:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
         return False
-
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = urllib.parse.urlencode(
         {
@@ -161,13 +125,11 @@ def notify_email(subject: str, body: str) -> bool:
     mail_to = os.environ.get("EMAIL_TO", "").strip()
     if not all([host, user, password, mail_from, mail_to]):
         return False
-
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = mail_from
     msg["To"] = mail_to
     msg.set_content(body)
-
     with smtplib.SMTP(host, port, timeout=30) as smtp:
         smtp.starttls()
         smtp.login(user, password)
@@ -176,233 +138,234 @@ def notify_email(subject: str, body: str) -> bool:
     return True
 
 
+def notify_macos(title: str, message: str) -> None:
+    try:
+        import subprocess
+
+        script = (
+            f'display notification {json.dumps(message)} '
+            f'with title {json.dumps(title)}'
+        )
+        subprocess.run(["osascript", "-e", script], check=False, timeout=5)
+    except Exception:
+        pass
+
+
 def send_alerts(title: str, body: str, *, local_macos: bool) -> None:
+    text = f"{title}\n\n{body}"
     sent = False
     try:
-        sent = notify_telegram(f"{title}\n\n{body}") or sent
+        sent = notify_telegram(text) or sent
     except Exception as exc:
         print(f"Помилка Telegram: {exc}", file=sys.stderr)
-
     try:
         sent = notify_email(title, body) or sent
     except Exception as exc:
         print(f"Помилка email: {exc}", file=sys.stderr)
-
     if local_macos:
         notify_macos(title, body.replace("\n", " "))
-
     if not sent and not local_macos:
         print(
-            "Сповіщення не надіслано: задайте TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID "
-            "або SMTP_* / EMAIL_*",
+            "Сповіщення не надіслано: задайте TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID",
             file=sys.stderr,
         )
 
 
-def appearance_message(product: dict, status: dict, entry: dict) -> tuple[str, str]:
-    title = "Reserved: розмір S з’явився в наявності"
-    qty = status.get("stock_quantity")
-    qty_line = f"Кількість: {qty}\n" if qty not in (None, 0) else ""
-    body = (
-        f"{product.get('name')}\n"
-        f"Розмір: {status.get('size_name')}\n"
-        f"Ціна: {entry.get('price')} {entry.get('currency')}\n"
-        f"Коли: {entry.get('day')} {entry.get('hour')} (Київ)\n"
-        f"{qty_line}"
-        f"{PRODUCT_URL}"
-    )
+def format_alert(product: dict, sizes: list[str], price: str | None = None) -> tuple[str, str]:
+    when = now_kyiv().strftime("%Y-%m-%d %H:%M")
+    sizes_txt = ", ".join(sizes)
+    mapping = {
+        "sizes": sizes_txt,
+        "when": f"{when} (Київ)",
+        "url": product.get("url", ""),
+        "price": price or "—",
+        "name": product.get("name", ""),
+    }
+    title = product.get("alert_title") or f"{product.get('name')}: {sizes_txt} в наявності!"
+    body = product.get("alert_body") or "{name}\nРозмір: {sizes}\n{when}\n{url}"
+    for key, value in mapping.items():
+        title = title.replace("{" + key + "}", str(value))
+        body = body.replace("{" + key + "}", str(value))
     return title, body
 
 
-def check_once(*, local_macos: bool = True, cloud: bool = False) -> dict:
-    checked_at = now_kyiv()
-    product = fetch_product()
-    status = size_status(product)
-    if status is None:
-        raise RuntimeError(f"Розмір {TARGET_SIZE} не знайдено у відповіді API")
+def check_reserved(product: dict) -> dict[str, dict]:
+    sku = product["sku"]
+    store_id = product.get("store_id", "1007")
+    url = f"https://arch.reserved.com/api/{store_id}/product/{sku}"
+    data = http_json(url, referer=product.get("url"))
+    wanted = {s.upper() for s in product.get("sizes") or []}
+    result: dict[str, dict] = {}
+    price = None
+    if data.get("finalPrice") is not None:
+        price = f"{data.get('finalPrice')} {data.get('currency') or 'UAH'}"
 
-    entry = {
-        "checked_at": checked_at.isoformat(timespec="seconds"),
-        "day": checked_at.strftime("%Y-%m-%d"),
-        "hour": checked_at.strftime("%H:%M"),
-        "weekday": checked_at.strftime("%A"),
-        "product_name": product.get("name"),
-        "product_sku": product.get("sku"),
-        "price": product.get("finalPrice"),
-        "currency": product.get("currency"),
-        "size": status,
-        "all_sizes": all_sizes_summary(product),
-        "product_url": PRODUCT_URL,
-    }
-    if not cloud:
-        append_log(entry)
-
-    prev = load_last_state()
-    prev_in_stock = None if prev is None else bool(prev.get("in_stock"))
-    now_in_stock = status["in_stock"]
-
-    # None -> True теж рахуємо появою (перший раз побачили в наявності)
-    appeared = now_in_stock and prev_in_stock is not True
-    disappeared = prev_in_stock is True and now_in_stock is False
-
-    save_state(
-        {
-            "checked_at": entry["checked_at"],
-            "in_stock": now_in_stock,
-            "stock_quantity": status["stock_quantity"],
-            "size_name": status["size_name"],
+    for size in data.get("sizes") or []:
+        name = (size.get("sizeName") or "").upper()
+        size_sku = (size.get("sku") or "").upper()
+        letter = None
+        for wanted_size in wanted:
+            if name.startswith(f"{wanted_size} ") or size_sku.endswith(f"-{wanted_size}"):
+                letter = wanted_size
+                break
+        if not letter:
+            continue
+        in_stock = bool(size.get("isInStock") or size.get("stock"))
+        result[letter] = {
+            "in_stock": in_stock,
+            "label": size.get("sizeName") or letter,
+            "quantity": size.get("stockQuantity"),
+            "price": price,
         }
+    return result
+
+
+def check_zara(product: dict) -> dict[str, dict]:
+    product_id = product["product_id"]
+    store_id = product.get("zara_store_id", "10701")
+    url = (
+        f"https://www.zara.com/itxrest/2/catalog/store/{store_id}/"
+        f"product/id/{product_id}/availability"
     )
-
-    if appeared:
-        entry["event"] = "appeared"
-        print(
-            f"З’ЯВИЛОСЬ У НАЯВНОСТІ: {status['size_name']} "
-            f"о {entry['day']} {entry['hour']} (Київ)"
-        )
-        print(f"   {PRODUCT_URL}")
-        title, body = appearance_message(product, status, entry)
-        send_alerts(title, body, local_macos=local_macos and not cloud)
-    elif disappeared:
-        entry["event"] = "disappeared"
-        print(
-            f"Зникло з наявності: {status['size_name']} "
-            f"о {entry['day']} {entry['hour']} (Київ)"
-        )
-    else:
-        mark = "є" if now_in_stock else "немає"
-        qty = status["stock_quantity"]
-        qty_txt = f", qty={qty}" if qty is not None else ""
-        print(
-            f"[{entry['day']} {entry['hour']}] розмір {TARGET_SIZE}: "
-            f"{mark} ({status['size_name']}{qty_txt})"
-        )
-
-    if cloud:
-        github_output = os.environ.get("GITHUB_OUTPUT")
-        if github_output:
-            with open(github_output, "a", encoding="utf-8") as f:
-                f.write(f"in_stock={str(now_in_stock).lower()}\n")
-                f.write(f"appeared={str(appeared).lower()}\n")
-
-    return entry
+    data = http_json(url, referer="https://www.zara.com/ua/uk/")
+    sku_map = {
+        str(k).upper(): int(v)
+        for k, v in (product.get("size_skus") or {}).items()
+    }
+    availability = {
+        int(item["sku"]): str(item.get("availability") or "").lower()
+        for item in data.get("skusAvailability") or []
+    }
+    in_stock_values = {"in_stock", "low_on_stock", "coming_soon"}
+    result: dict[str, dict] = {}
+    for size_letter in product.get("sizes") or []:
+        key = size_letter.upper()
+        sku = sku_map.get(key)
+        if sku is None:
+            print(
+                f"  ! для {product['id']} немає size_skus.{key} у products.json",
+                file=sys.stderr,
+            )
+            continue
+        status = availability.get(sku, "unknown")
+        result[key] = {
+            "in_stock": status in in_stock_values,
+            "label": key,
+            "quantity": None,
+            "price": None,
+            "raw_status": status,
+            "sku": sku,
+        }
+    return result
 
 
-def report() -> None:
-    if not LOG_PATH.exists():
-        print("Лог ще порожній. Спочатку запустіть моніторинг.")
+def check_product(product: dict) -> dict[str, dict]:
+    shop = (product.get("shop") or "").lower()
+    if shop == "reserved":
+        return check_reserved(product)
+    if shop == "zara":
+        return check_zara(product)
+    raise ValueError(f"Невідомий shop: {shop}")
+
+
+def process_product(
+    product: dict,
+    state: dict,
+    *,
+    local_macos: bool,
+) -> None:
+    pid = product["id"]
+    checked_at = now_kyiv().isoformat(timespec="seconds")
+    print(f"\n== {product.get('name')} ({pid})")
+    try:
+        sizes_status = check_product(product)
+    except Exception as exc:
+        print(f"  помилка перевірки: {exc}", file=sys.stderr)
         return
 
-    available_hours: list[tuple[str, str]] = []
-    appeared_events: list[str] = []
-    last = None
+    prev_product = state.get(pid) or {}
+    prev_sizes = prev_product.get("sizes") or {}
+    new_sizes_state: dict[str, dict] = {}
+    appeared: list[str] = []
+    price = None
 
-    with LOG_PATH.open(encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if not line:
-                continue
-            entry = json.loads(line)
-            in_stock = bool(entry.get("size", {}).get("in_stock"))
-            stamp = f"{entry.get('day')} {entry.get('hour')}"
-            if in_stock:
-                available_hours.append((entry.get("day", ""), entry.get("hour", "")))
-            if last is not None and (not last) and in_stock:
-                appeared_events.append(stamp)
-            last = in_stock
+    for size_letter, info in sizes_status.items():
+        in_stock = bool(info.get("in_stock"))
+        prev = prev_sizes.get(size_letter)
+        prev_in_stock = None if prev is None else bool(prev.get("in_stock"))
+        mark = "є" if in_stock else "немає"
+        extra = ""
+        if info.get("raw_status"):
+            extra = f", status={info['raw_status']}"
+        if info.get("quantity") is not None:
+            extra += f", qty={info['quantity']}"
+        print(f"  [{now_kyiv():%Y-%m-%d %H:%M}] {size_letter}: {mark}{extra}")
 
-    print(f"Файл логу: {LOG_PATH}")
-    print(f"Перевірок з наявністю S: {len(available_hours)}")
-    if appeared_events:
-        print("Моменти появи в наявності (перехід немає → є):")
-        for stamp in appeared_events:
-            print(f"  • {stamp}")
-    elif available_hours:
-        print("Години, коли під час перевірки розмір S був у наявності:")
-        for day, hour in available_hours:
-            print(f"  • {day} {hour}")
-    else:
-        print("За весь час логу розмір S у наявності не фіксувався.")
+        if in_stock and prev_in_stock is not True:
+            appeared.append(size_letter)
+        if info.get("price"):
+            price = info["price"]
+
+        new_sizes_state[size_letter] = {
+            "in_stock": in_stock,
+            "checked_at": checked_at,
+            "label": info.get("label"),
+            "raw_status": info.get("raw_status"),
+            "sku": info.get("sku"),
+        }
+
+    state[pid] = {"checked_at": checked_at, "sizes": new_sizes_state}
+
+    if appeared:
+        title, body = format_alert(product, appeared, price=price)
+        print(f"  ALERT: {title}")
+        send_alerts(title, body, local_macos=local_macos)
+
+
+def run_once(*, cloud: bool, local_macos: bool) -> int:
+    products = load_products()
+    state = load_state()
+    for product in products:
+        process_product(product, state, local_macos=local_macos and not cloud)
+    save_state(state)
+    return 0
 
 
 def watch(every_minutes: float, local_macos: bool) -> None:
-    print(
-        f"Моніторинг {SKU}, розмір {TARGET_SIZE}. "
-        f"Інтервал: {every_minutes} хв. Ctrl+C щоб зупинити."
-    )
-    print(f"Лог: {LOG_PATH}")
+    print(f"Моніторинг кожні {every_minutes} хв. Ctrl+C щоб зупинити.")
     while True:
         try:
-            check_once(local_macos=local_macos, cloud=False)
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
-            stamp = now_kyiv().strftime("%Y-%m-%d %H:%M")
-            print(f"[{stamp}] помилка мережі: {exc}", file=sys.stderr)
+            run_once(cloud=False, local_macos=local_macos)
         except Exception as exc:
-            stamp = now_kyiv().strftime("%Y-%m-%d %H:%M")
-            print(f"[{stamp}] помилка: {exc}", file=sys.stderr)
+            print(f"помилка: {exc}", file=sys.stderr)
         time.sleep(max(every_minutes, 1) * 60)
 
 
 def test_telegram() -> int:
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
-    if not token or not chat_id:
-        print(
-            "Задайте змінні оточення:\n"
-            "  export TELEGRAM_BOT_TOKEN='...'\n"
-            "  export TELEGRAM_CHAT_ID='...'",
-            file=sys.stderr,
-        )
+    if not os.environ.get("TELEGRAM_BOT_TOKEN") or not os.environ.get("TELEGRAM_CHAT_ID"):
+        print("Задайте TELEGRAM_BOT_TOKEN і TELEGRAM_CHAT_ID", file=sys.stderr)
         return 1
     notify_telegram(
-        "Тест моніторингу Reserved\n\n"
-        "Якщо бачите це — Telegram підключено правильно."
+        "Тест моніторингу\n\nReserved + Zara підключені. Якщо бачите це — все ок."
     )
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Моніторинг наявності розміру S на Reserved"
-    )
-    parser.add_argument("--watch", action="store_true", help="перевіряти постійно")
-    parser.add_argument(
-        "--every",
-        type=float,
-        default=10,
-        help="інтервал у хвилинах для --watch (за замовчуванням 10)",
-    )
-    parser.add_argument("--report", action="store_true", help="звіт з локального логу")
-    parser.add_argument(
-        "--cloud",
-        action="store_true",
-        help="режим GitHub Actions: Telegram/email, без macOS",
-    )
-    parser.add_argument(
-        "--test-telegram",
-        action="store_true",
-        help="надіслати тестове повідомлення в Telegram",
-    )
-    parser.add_argument(
-        "--no-notify",
-        action="store_true",
-        help="не показувати локальні macOS-сповіщення",
-    )
+    parser = argparse.ArgumentParser(description="Моніторинг Reserved + Zara")
+    parser.add_argument("--cloud", action="store_true", help="режим GitHub Actions")
+    parser.add_argument("--watch", action="store_true")
+    parser.add_argument("--every", type=float, default=10)
+    parser.add_argument("--test-telegram", action="store_true")
+    parser.add_argument("--no-notify", action="store_true")
     args = parser.parse_args()
 
     if args.test_telegram:
         return test_telegram()
-
-    if args.report:
-        report()
-        return 0
-
     if args.watch:
         watch(args.every, local_macos=not args.no_notify)
         return 0
-
-    check_once(local_macos=not args.no_notify and not args.cloud, cloud=args.cloud)
-    return 0
+    return run_once(cloud=args.cloud, local_macos=not args.no_notify and not args.cloud)
 
 
 if __name__ == "__main__":
