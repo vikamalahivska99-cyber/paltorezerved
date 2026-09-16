@@ -1,0 +1,68 @@
+Як увімкнути сповіщення без увімкненого ноута
+==============================================
+
+Ідея: GitHub Actions у хмарі кожні 15 хвилин перевіряє Reserved
+і пише вам у Telegram (або на пошту), щойно з’явиться розмір S.
+
+--------------------------------
+1) Telegram-бот (рекомендовано)
+--------------------------------
+1. У Telegram відкрийте @BotFather
+2. Надішліть /newbot і створіть бота
+3. Скопіюйте токен (вигляд: 123456:ABC-DEF...)
+4. Напишіть своєму боту будь-яке повідомлення (наприклад: привіт)
+5. Відкрийте в браузері (підставте свій токен):
+   https://api.telegram.org/botТОВКЕН/getUpdates
+6. У відповіді знайдіть "chat":{"id": ЧИСЛО } — це TELEGRAM_CHAT_ID
+   (для особистого чату часто виглядає як 123456789)
+
+--------------------------------
+2) Залити проєкт на GitHub
+--------------------------------
+1. Створіть новий репозиторій на github.com (можна Private)
+2. У терміналі в цій папці:
+
+   git init
+   git add monitor_stock.py last_state.json .gitignore .github
+   git commit -m "Add Reserved size S cloud monitor"
+   git branch -M main
+   git remote add origin https://github.com/ВАШ_НІК/НАЗВА_РЕПО.git
+   git push -u origin main
+
+--------------------------------
+3) Secrets у репозиторії
+--------------------------------
+GitHub → ваш репозиторій → Settings → Secrets and variables → Actions
+→ New repository secret
+
+Обов’язково для Telegram:
+  TELEGRAM_BOT_TOKEN = токен від BotFather
+  TELEGRAM_CHAT_ID   = ваш chat id
+
+Опційно для пошти (наприклад Gmail + пароль додатка):
+  SMTP_HOST      = smtp.gmail.com
+  SMTP_PORT      = 587
+  SMTP_USER      = ваша@gmail.com
+  SMTP_PASSWORD  = пароль додатка
+  EMAIL_FROM     = ваша@gmail.com
+  EMAIL_TO       = куди надсилати
+
+--------------------------------
+4) Перевірити, що працює
+--------------------------------
+Actions → Reserved size S alert → Run workflow
+
+Або локально:
+  export TELEGRAM_BOT_TOKEN='...'
+  export TELEGRAM_CHAT_ID='...'
+  python3 monitor_stock.py --test-telegram
+
+--------------------------------
+Важливо
+--------------------------------
+• Ноут може бути вимкнений — працює GitHub.
+• Повідомлення прийде лише коли статус зміниться з «немає» на «є»
+  (щоб не спамити кожні 15 хв, поки товар лежить у наявності).
+• Безкоштовний план GitHub Actions має ліміти хвилин на місяць
+  для приватних репо; публічне репо зазвичай комфортніше для cron.
+• Розклад GitHub іноді запізнюється на кілька хвилин — це нормально.
