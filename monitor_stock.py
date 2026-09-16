@@ -210,7 +210,10 @@ def check_reserved(product: dict) -> dict[str, dict]:
                 break
         if not letter:
             continue
-        in_stock = bool(size.get("isInStock") or size.get("stock"))
+        # Онлайн на сайті: можна додати в кошик і оформити замовлення
+        in_stock = bool(size.get("isInStock") or size.get("stock")) and not bool(
+            data.get("isBlockedToCart")
+        )
         result[letter] = {
             "in_stock": in_stock,
             "label": size.get("sizeName") or letter,
@@ -236,7 +239,8 @@ def check_zara(product: dict) -> dict[str, dict]:
         int(item["sku"]): str(item.get("availability") or "").lower()
         for item in data.get("skusAvailability") or []
     }
-    in_stock_values = {"in_stock", "low_on_stock", "coming_soon"}
+    # Тільки статуси, з якими на сайті зазвичай можна замовити онлайн
+    in_stock_values = {"in_stock", "low_on_stock"}
     result: dict[str, dict] = {}
     for size_letter in product.get("sizes") or []:
         key = size_letter.upper()

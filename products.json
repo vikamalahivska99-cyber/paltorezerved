@@ -8,8 +8,8 @@
       "sku": "493IA-80X",
       "store_id": "1007",
       "sizes": ["S"],
-      "alert_title": "Пальто в розмірі S в наявності — хапай хутчіш!",
-      "alert_body": "Reserved, тренч з бавовною (бежевий).\nРозмір: {sizes}\nЦіна: {price}\nКоли: {when}\n{url}"
+      "alert_title": "Пальто Reserved S — онлайн в наявності, хапай хутчіш!",
+      "alert_body": "Можна замовляти на сайті Reserved.\nРозмір: {sizes}\nЦіна: {price}\nКоли: {when}\nВідкрий і додай у кошик:\n{url}"
     },
     {
       "id": "zara-fiorenza-00085128",
@@ -23,8 +23,8 @@
         "S": 450244943,
         "M": 450244945
       },
-      "alert_title": "Zara лонг Fiorenza — розмір {sizes} в наявності, хапай хутчіш!",
-      "alert_body": "Футболка з вареним ефектом Fiorenza.\nРозмір: {sizes}\nКоли: {when}\n{url}"
+      "alert_title": "Zara Fiorenza {sizes} — онлайн в наявності, хапай хутчіш!",
+      "alert_body": "Можна замовляти на сайті Zara.\nРозмір: {sizes}\nКоли: {when}\nВідкрий і додай у кошик:\n{url}"
     }
   ]
 }
