@@ -1,10 +1,10 @@
 {
   "reserved-trench-493IA-80X": {
-    "checked_at": "2026-09-23T03:15:58+03:00",
+    "checked_at": "2026-09-23T08:02:57+03:00",
     "sizes": {
       "S": {
         "in_stock": false,
-        "checked_at": "2026-09-23T03:15:58+03:00",
+        "checked_at": "2026-09-23T08:02:57+03:00",
         "label": "S | UA 42",
         "raw_status": null,
         "sku": null
@@ -12,18 +12,18 @@
     }
   },
   "zara-fiorenza-00085128": {
-    "checked_at": "2026-09-23T03:15:59+03:00",
+    "checked_at": "2026-09-23T08:02:58+03:00",
     "sizes": {
       "S": {
         "in_stock": true,
-        "checked_at": "2026-09-23T03:15:59+03:00",
+        "checked_at": "2026-09-23T08:02:58+03:00",
         "label": "S",
         "raw_status": "in_stock",
         "sku": 450244943
       },
       "M": {
         "in_stock": false,
-        "checked_at": "2026-09-23T03:15:59+03:00",
+        "checked_at": "2026-09-23T08:02:58+03:00",
         "label": "M",
         "raw_status": "out_of_stock",
         "sku": 450244945
