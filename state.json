@@ -12,18 +12,18 @@
     }
   },
   "zara-fiorenza-00085128": {
-    "checked_at": "2026-10-04T03:26:26+03:00",
+    "checked_at": "2026-10-04T09:14:44+03:00",
     "sizes": {
       "S": {
         "in_stock": true,
-        "checked_at": "2026-10-04T03:26:26+03:00",
+        "checked_at": "2026-10-04T09:14:44+03:00",
         "label": "S",
         "raw_status": "in_stock",
         "sku": 450244943
       },
       "M": {
         "in_stock": false,
-        "checked_at": "2026-10-04T03:26:26+03:00",
+        "checked_at": "2026-10-04T09:14:44+03:00",
         "label": "M",
         "raw_status": "out_of_stock",
         "sku": 450244945
